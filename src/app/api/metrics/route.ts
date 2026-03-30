@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
     const [owner, repo] = githubRepo.split('/');
     if (owner && repo) {
       // Build generic search queries from whatever package params are provided.
-      // Callers that want the curated SDK-specific searches should use the
+      // Callers that want the curated dashboard-specific searches should use the
       // dashboard directly; this endpoint stays package-agnostic.
       const dependencyQueries: string[] = [];
       if (pypiPackage) dependencyQueries.push(`"${pypiPackage}"`);

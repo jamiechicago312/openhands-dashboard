@@ -1,4 +1,4 @@
-export const SDK_CONFIG = {
+export const TARGET_CONFIG = {
   name: 'OpenHands',
   description: 'Metrics dashboard for the OpenHands GitHub repository and Python package',
   github: {

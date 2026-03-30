@@ -16,16 +16,12 @@ describe('StoredDependentRepos interface', () => {
 });
 
 describe('getStoredDependentRepos', () => {
-  it('returns { count: null, date: null } when no database is available', async () => {
-    // DATABASE_URL is not set in the test environment, so getDb() returns null,
-    // getOrCreateSDK() throws, and the try/catch falls back to nulls.
-    // This exercises the real fallback code path without any mocking.
+  it('returns { count: null, date: null } when the dashboard cannot read snapshots', async () => {
     const result = await getStoredDependentRepos();
     expect(result).toEqual({ count: null, date: null });
   });
 
-  it('always resolves (never rejects), even without a database', async () => {
-    // The try/catch in getStoredDependentRepos must swallow DB errors.
+  it('always resolves (never rejects), even without a ready database', async () => {
     await expect(getStoredDependentRepos()).resolves.toBeDefined();
   });
 });

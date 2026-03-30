@@ -1,6 +1,6 @@
 import { pgTable, serial, varchar, timestamp, integer, date, unique } from 'drizzle-orm/pg-core';
 
-export const sdks = pgTable('sdks', {
+export const trackedRepositories = pgTable('sdks', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
   githubRepo: varchar('github_repo', { length: 255 }),
@@ -11,7 +11,7 @@ export const sdks = pgTable('sdks', {
 
 export const metricsSnapshots = pgTable('metrics_snapshots', {
   id: serial('id').primaryKey(),
-  sdkId: integer('sdk_id').references(() => sdks.id),
+  repositoryId: integer('sdk_id').references(() => trackedRepositories.id),
   date: date('date').notNull(),
   githubStars: integer('github_stars'),
   githubForks: integer('github_forks'),
@@ -23,10 +23,10 @@ export const metricsSnapshots = pgTable('metrics_snapshots', {
   pypiDownloadsWeekly: integer('pypi_downloads_weekly'),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
-  unique().on(table.sdkId, table.date),
+  unique().on(table.repositoryId, table.date),
 ]);
 
-export type SDK = typeof sdks.$inferSelect;
-export type NewSDK = typeof sdks.$inferInsert;
+export type TrackedRepository = typeof trackedRepositories.$inferSelect;
+export type NewTrackedRepository = typeof trackedRepositories.$inferInsert;
 export type MetricsSnapshot = typeof metricsSnapshots.$inferSelect;
 export type NewMetricsSnapshot = typeof metricsSnapshots.$inferInsert;

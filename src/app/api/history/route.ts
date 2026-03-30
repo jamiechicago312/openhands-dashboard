@@ -1,19 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { sdks, metricsSnapshots } from '@/lib/schema';
+import { trackedRepositories, metricsSnapshots } from '@/lib/schema';
 import { eq, desc, and, gte } from 'drizzle-orm';
-import { SDK_CONFIG } from '@/lib/sdk-config';
+import { TARGET_CONFIG } from '@/lib/target-config';
 
 export const dynamic = 'force-dynamic';
+
+const validPeriods = [7, 30, 90, 180, 365];
+
+function emptyHistoryResponse(period: number, startDate: string, endDate: string, message: string) {
+  return NextResponse.json({
+    period,
+    data: {
+      githubStars: [],
+      githubForks: [],
+      githubActiveForks: [],
+      pypiDownloads: [],
+    },
+    snapshotCount: 0,
+    startDate,
+    endDate,
+    message,
+  });
+}
+
+async function findTrackedRepositoryId(db: NonNullable<ReturnType<typeof getDb>>, githubRepo: string) {
+  const result = await db
+    .select({ id: trackedRepositories.id })
+    .from(trackedRepositories)
+    .where(eq(trackedRepositories.githubRepo, githubRepo))
+    .limit(1);
+
+  return result[0]?.id;
+}
 
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const period = parseInt(searchParams.get('period') || '30', 10);
-    const sdkRepo = searchParams.get('sdk'); // Optional: owner/repo format
 
-    // Validate period
-    const validPeriods = [7, 30, 90, 180, 365];
     if (!validPeriods.includes(period)) {
       return NextResponse.json(
         { error: `Invalid period. Valid values: ${validPeriods.join(', ')}` },
@@ -22,159 +47,59 @@ export async function GET(request: NextRequest) {
     }
 
     const db = getDb();
-    
-    // If database is not available, return empty data
-    if (!db) {
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - period);
-      return NextResponse.json({
-        period,
-        data: {
-          githubStars: [],
-          githubForks: [],
-          githubActiveForks: [],
-          pypiDownloads: [],
-        },
-        snapshotCount: 0,
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0],
-        message: 'Database not available. Please configure DATABASE_URL.',
-      });
-    }
-    
-    // Calculate date range
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - period);
 
-    let sdkId: number | undefined;
+    const startDateString = startDate.toISOString().split('T')[0];
+    const endDateString = endDate.toISOString().split('T')[0];
 
-    // If sdk parameter is provided, look up the SDK
-    if (sdkRepo) {
-      const [owner, repo] = sdkRepo.split('/');
-      if (owner && repo) {
-        try {
-          const sdk = await db
-            .select()
-            .from(sdks)
-            .where(eq(sdks.githubRepo, `${owner}/${repo}`))
-            .limit(1);
-          
-          if (sdk.length > 0) {
-            sdkId = sdk[0].id;
-          }
-        } catch (dbError) {
-          console.error('Database query error:', dbError);
-          // Return empty data if DB query fails
-          return NextResponse.json({
-            period,
-            data: {
-              githubStars: [],
-              githubForks: [],
-              githubActiveForks: [],
-              pypiDownloads: [],
-            },
-            snapshotCount: 0,
-            startDate: startDate.toISOString().split('T')[0],
-            endDate: endDate.toISOString().split('T')[0],
-            message: 'Database unavailable or empty.',
-          });
-        }
-      }
-    } else {
-      // Default: Look up the SDK from SDK_CONFIG
-      const defaultSdkRepo = `${SDK_CONFIG.github.owner}/${SDK_CONFIG.github.repo}`;
-      try {
-        const sdk = await db
-          .select()
-          .from(sdks)
-          .where(eq(sdks.githubRepo, defaultSdkRepo))
-          .limit(1);
-        
-        if (sdk.length > 0) {
-          sdkId = sdk[0].id;
-        }
-      } catch (dbError) {
-        console.error('Database query error:', dbError);
-        // Return empty data if DB query fails
-        return NextResponse.json({
-          period,
-          data: {
-            githubStars: [],
-            githubForks: [],
-            githubActiveForks: [],
-            pypiDownloads: [],
-          },
-          snapshotCount: 0,
-          startDate: startDate.toISOString().split('T')[0],
-          endDate: endDate.toISOString().split('T')[0],
-          message: 'Database unavailable or empty.',
-        });
-      }
+    if (!db) {
+      return emptyHistoryResponse(period, startDateString, endDateString, 'Database not available. Please configure DATABASE_URL.');
     }
 
-    // If no SDK found, return empty data
-    if (!sdkId) {
-      return NextResponse.json({
+    const repoParam = searchParams.get('repo') ?? searchParams.get('sdk');
+    const githubRepo = repoParam || `${TARGET_CONFIG.github.owner}/${TARGET_CONFIG.github.repo}`;
+
+    let repositoryId: number | undefined;
+    try {
+      repositoryId = await findTrackedRepositoryId(db, githubRepo);
+    } catch (dbError) {
+      console.error('Database query error:', dbError);
+      return emptyHistoryResponse(period, startDateString, endDateString, 'Database unavailable or empty.');
+    }
+
+    if (!repositoryId) {
+      return emptyHistoryResponse(
         period,
-        data: {
-          githubStars: [],
-          githubForks: [],
-          githubActiveForks: [],
-          pypiDownloads: [],
-        },
-        snapshotCount: 0,
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0],
-        message: 'No tracked repository found in the database. Run the cron job to collect the initial snapshot.',
-      });
+        startDateString,
+        endDateString,
+        'No tracked repository found in the database. Run the cron job to collect the initial snapshot.'
+      );
     }
 
-    // Build query with all conditions
     const snapshots = await db
       .select()
       .from(metricsSnapshots)
       .where(
         and(
-          eq(metricsSnapshots.sdkId, sdkId),
-          gte(metricsSnapshots.date, startDate.toISOString().split('T')[0])
+          eq(metricsSnapshots.repositoryId, repositoryId),
+          gte(metricsSnapshots.date, startDateString)
         )
       )
       .orderBy(desc(metricsSnapshots.date));
 
-    // Transform data for charts
-    const starsData = snapshots.map((s) => ({
-      date: s.date,
-      value: s.githubStars,
-    }));
-
-    const forksData = snapshots.map((s) => ({
-      date: s.date,
-      value: s.githubForks,
-    }));
-
-    const activeForksData = snapshots.map((s) => ({
-      date: s.date,
-      value: s.githubActiveForks,
-    }));
-
-    const pypiData = snapshots.map((s) => ({
-      date: s.date,
-      value: s.pypiDownloadsWeekly,
-    }));
-
     return NextResponse.json({
       period,
       data: {
-        githubStars: starsData,
-        githubForks: forksData,
-        githubActiveForks: activeForksData,
-        pypiDownloads: pypiData,
+        githubStars: snapshots.map((snapshot) => ({ date: snapshot.date, value: snapshot.githubStars })),
+        githubForks: snapshots.map((snapshot) => ({ date: snapshot.date, value: snapshot.githubForks })),
+        githubActiveForks: snapshots.map((snapshot) => ({ date: snapshot.date, value: snapshot.githubActiveForks })),
+        pypiDownloads: snapshots.map((snapshot) => ({ date: snapshot.date, value: snapshot.pypiDownloadsWeekly })),
       },
       snapshotCount: snapshots.length,
-      startDate: startDate.toISOString().split('T')[0],
-      endDate: endDate.toISOString().split('T')[0],
+      startDate: startDateString,
+      endDate: endDateString,
     });
   } catch (error) {
     console.error('Failed to fetch historical data:', error);
